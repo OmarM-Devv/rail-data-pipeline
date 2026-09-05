@@ -108,6 +108,74 @@ def validate_data(df):
     print("All data validation checks passed")
 
 
+def reshape_ticket_data(df):
+    ticket_columns = {
+        "entries_and_exits_full_price_tickets": "full_price",
+        "entries_and_exits_reduced_price_tickets": "reduced_price",
+        "entries_and_exits_season_tickets": "season",
+    }
+
+    ticket_df = df.melt(
+        id_vars=[
+            "station_name",
+            "national_location_code_nlc",
+            "region",
+        ],
+        value_vars=list(ticket_columns),
+        var_name="ticket_type",
+        value_name="entries_and_exits",
+    )
+
+    ticket_df["ticket_type"] = ticket_df["ticket_type"].map(ticket_columns)
+    ticket_df["entries_and_exits"] = ticket_df["entries_and_exits"].astype("Int64")
+
+    print("Rows after reshaping ticket data:", len(ticket_df))
+    return ticket_df
+
+
+def validate_ticket_data(ticket_df, station_count):
+    expected_columns = [
+        "station_name",
+        "national_location_code_nlc",
+        "region",
+        "ticket_type",
+        "entries_and_exits",
+    ]
+
+    if list(ticket_df.columns) != expected_columns:
+        raise ValueError("Unexpected columns in reshaped ticket data")
+
+    expected_rows = station_count * 3
+    if ticket_df.empty or len(ticket_df) != expected_rows:
+        raise ValueError(
+            f"Expected {expected_rows} ticket rows, found {len(ticket_df)}"
+        )
+
+    for column in ["station_name", "national_location_code_nlc", "ticket_type"]:
+        if ticket_df[column].isna().any():
+            raise ValueError(f"Missing values found in {column}")
+
+        if ticket_df[column].str.strip().eq("").any():
+            raise ValueError(f"Blank values found in {column}")
+
+    expected_types = {"full_price", "reduced_price", "season"}
+    if set(ticket_df["ticket_type"]) != expected_types:
+        raise ValueError("Unexpected ticket types in reshaped data")
+
+    if ticket_df.duplicated(
+        subset=["national_location_code_nlc", "ticket_type"]
+    ).any():
+        raise ValueError("Duplicate station and ticket-type combinations")
+
+    if not pd.api.types.is_numeric_dtype(ticket_df["entries_and_exits"]):
+        raise ValueError("Reshaped entries and exits must be numeric")
+
+    if (ticket_df["entries_and_exits"] < 0).any():
+        raise ValueError("Negative entries and exits in reshaped data")
+
+    print("Reshaped ticket data validation passed")
+
+
 def save_processed_csv(df, processed_path):
     processed_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(processed_path, index=False)
@@ -132,8 +200,17 @@ def main():
     df = load_and_clean_data(raw_path)
     validate_data(df)
 
+    ticket_df = reshape_ticket_data(df)
+    validate_ticket_data(ticket_df, len(df))
+
     processed_path = Path("data/processed/station_usage.csv")
     save_processed_csv(df, processed_path)
     validate_processed_file(processed_path)
+
+    ticket_path = Path("data/processed/station_usage_by_ticket_type.csv")
+    save_processed_csv(ticket_df, ticket_path)
+    validate_processed_file(ticket_path)
+
+
 if __name__ == "__main__":
     main()
